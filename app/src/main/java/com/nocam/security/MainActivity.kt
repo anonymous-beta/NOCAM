@@ -1,3 +1,4 @@
+
 package com.nocam.security
 
 import android.os.Bundle
@@ -35,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -51,7 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -64,7 +64,6 @@ private val NocamText = Color(0xFFE8EDE7)
 private val NocamMuted = Color(0xFF9AA69B)
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -78,18 +77,16 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun NocamTheme(content: @Composable () -> Unit) {
-    val colors = darkColorScheme(
-        primary = NocamGreen,
-        secondary = NocamAmber,
-        background = NocamBlack,
-        surface = NocamPanel,
-        onPrimary = Color.Black,
-        onBackground = NocamText,
-        onSurface = NocamText
-    )
-
     MaterialTheme(
-        colorScheme = colors,
+        colorScheme = darkColorScheme(
+            primary = NocamGreen,
+            secondary = NocamAmber,
+            background = NocamBlack,
+            surface = NocamPanel,
+            onPrimary = Color.Black,
+            onBackground = NocamText,
+            onSurface = NocamText
+        ),
         content = content
     )
 }
@@ -98,11 +95,10 @@ private fun NocamTheme(content: @Composable () -> Unit) {
 private fun NocamScreen() {
     val activity = androidx.compose.ui.platform.LocalContext.current
         as ComponentActivity
-
     val scope = rememberCoroutineScope()
 
     var target by remember { mutableStateOf("192.168.1.1") }
-    var allowNetworkScan by remember { mutableStateOf(false) }
+    var authorized by remember { mutableStateOf(false) }
     var running by remember { mutableStateOf(false) }
     var status by remember {
         mutableStateOf("READY • AUTHORIZED NETWORKS ONLY")
@@ -119,13 +115,16 @@ private fun NocamScreen() {
         if (uri != null) {
             scope.launch {
                 try {
-                    activity.contentResolver.openOutputStream(uri)?.use { stream ->
-                        stream.write(reportText.toByteArray(Charsets.UTF_8))
-                    } ?: throw IOException("Could not open the selected file.")
+                    val output = activity.contentResolver.openOutputStream(uri)
+                        ?: throw IOException("Could not open the selected file.")
 
+                    output.use {
+                        it.write(reportText.toByteArray(Charsets.UTF_8))
+                    }
                     status = "REPORT EXPORTED"
                 } catch (exception: Exception) {
-                    status = "EXPORT FAILED: ${exception.message ?: "I/O error"}"
+                    status = "EXPORT FAILED: " +
+                        (exception.message ?: "I/O error")
                 }
             }
         }
@@ -178,11 +177,7 @@ private fun NocamScreen() {
                     )
                 }
 
-                Text(
-                    text = "v1.0",
-                    color = NocamMuted,
-                    fontSize = 12.sp
-                )
+                Text("v1.0", color = NocamMuted, fontSize = 12.sp)
             }
 
             HorizontalDivider(color = NocamGreen.copy(alpha = 0.35f))
@@ -199,7 +194,7 @@ private fun NocamScreen() {
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "TARGET CONFIGURATION",
+                        "TARGET CONFIGURATION",
                         color = NocamGreen,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -218,16 +213,11 @@ private fun NocamScreen() {
                         )
                     )
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
-                            checked = allowNetworkScan,
-                            onCheckedChange = {
-                                allowNetworkScan = it
-                            }
+                            checked = authorized,
+                            onCheckedChange = { authorized = it }
                         )
-
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 "I am authorized to scan this network",
@@ -248,48 +238,48 @@ private fun NocamScreen() {
                     ) {
                         Button(
                             onClick = {
-                                if (!allowNetworkScan) {
+                                if (!authorized) {
                                     status = "CONFIRM AUTHORIZATION FIRST"
-                                } else if (running) {
-                                    status = "SCAN ALREADY RUNNING"
-                                } else {
+                                } else if (!running) {
                                     running = true
                                     findings = emptyList()
-                                    status = "SCANNING AUTHORIZED TARGET"
+                                    reportText = ""
+                                    status = "VALIDATING TARGET"
 
                                     scanJob = scope.launch {
                                         try {
+                                            // Enforce the existing private IPv4
+                                            // and CIDR scope restrictions.
                                             val hosts = TargetScope.parse(target)
 
-                                            val scanner = NetworkScanner()
-                                            val results = scanner.scan(
+                                            status = "STARTING NETWORK AUDIT"
+
+                                            // NetworkScanner is an object, not
+                                            // a class. scan() returns ScanReport.
+                                            val report = NetworkScanner.scan(
+                                                scope = target,
                                                 hosts = hosts,
-                                                onProgress = { host, port ->
-                                                    status = "CHECKING $host:$port"
+                                                onProgress = {
+                                                        completed,
+                                                        total,
+                                                        current ->
+                                                    status =
+                                                        "SCANNING $completed/$total • $current"
                                                 }
                                             )
 
-                                            findings = results
-                                            status = "SCAN COMPLETE • ${results.size} RESULTS"
-
-                                            reportText = buildString {
-                                                appendLine("# NOCAM Scan Report")
-                                                appendLine()
-                                                appendLine("Target: $target")
-                                                appendLine("Results: ${results.size}")
-                                                appendLine()
-                                                results.forEach { finding ->
-                                                    appendLine(
-                                                        "- ${finding.host}:${finding.port} " +
-                                                            "| ${finding.service} " +
-                                                            "| ${finding.state} " +
-                                                            "| ${finding.detail}"
-                                                    )
-                                                }
-                                            }
+                                            findings = report.findings
+                                            reportText = report.toMarkdown()
+                                            status =
+                                                "SCAN COMPLETE • " +
+                                                "${report.openCount} OPEN PORTS"
+                                        } catch (exception: CancellationException) {
+                                            status = "SCAN CANCELLED"
+                                            throw exception
                                         } catch (exception: Exception) {
                                             status = "SCAN FAILED: " +
-                                                (exception.message ?: "Invalid target")
+                                                (exception.message
+                                                    ?: "Invalid target")
                                         } finally {
                                             running = false
                                             scanJob = null
@@ -361,50 +351,41 @@ private fun NocamScreen() {
 
                         Text(
                             text = status,
-                            color = if (status.contains("FAILED")) {
-                                NocamAmber
-                            } else {
-                                NocamGreen
-                            },
+                            color = if (
+                                status.contains("FAILED") ||
+                                status.contains("CANCELLED")
+                            ) NocamAmber else NocamGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
                     Text(
-                        text = "RESULTS • ${findings.size}",
+                        "RESULTS • ${findings.size}",
                         color = NocamMuted,
                         fontSize = 12.sp
                     )
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Button(
+                onClick = {
+                    if (reportText.isBlank()) {
+                        status = "RUN A SCAN BEFORE EXPORTING"
+                    } else {
+                        exportLauncher.launch("nocam-report.md")
+                    }
+                },
+                enabled = !running,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Button(
-                    onClick = {
-                        if (reportText.isBlank()) {
-                            status = "RUN A SCAN BEFORE EXPORTING"
-                        } else {
-                            exportLauncher.launch("nocam-report.md")
-                        }
-                    },
-                    enabled = !running,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        Icons.Default.Article,
-                        contentDescription = null
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("EXPORT MARKDOWN REPORT")
-                }
+                Icon(Icons.Default.Article, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("EXPORT MARKDOWN REPORT")
             }
 
             Text(
-                text = "FINDINGS",
+                "FINDINGS",
                 color = NocamGreen,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -442,7 +423,7 @@ private fun NocamScreen() {
             }
 
             Text(
-                text = "NOCAM • AUTHORIZED SECURITY TESTING ONLY",
+                "NOCAM • AUTHORIZED SECURITY TESTING ONLY",
                 color = NocamMuted,
                 fontSize = 10.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -464,17 +445,15 @@ private fun FindingRow(finding: ScanFinding) {
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "${finding.host}:${finding.port}",
+                    "${finding.host}:${finding.port}",
                     color = NocamText,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = finding.state,
+                    finding.state,
                     color = if (finding.state.equals("OPEN", true)) {
                         NocamGreen
                     } else {
@@ -486,13 +465,12 @@ private fun FindingRow(finding: ScanFinding) {
             }
 
             Text(
-                text = finding.service,
+                finding.service,
                 color = NocamAmber,
                 fontSize = 12.sp
             )
-
             Text(
-                text = finding.detail,
+                finding.detail,
                 color = NocamMuted,
                 fontSize = 12.sp
             )
