@@ -1,21 +1,18 @@
+
 name: NOCAM Android APK Builder
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: nocam-android-${{ github.ref }}
+  group: nocam-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,79 +21,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
-      - name: Checkout NOCAM source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Java for Android Gradle
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 4. Install image generation dependency
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install Pillow
 
-      # 5. Generate NOCAM branding assets
       - name: Generate NOCAM branding
         run: |
-          python tools/generate_brand_assets.py
+          if [ -f tools/generate_brand_assets.py ]; then
+            python tools/generate_brand_assets.py
+          else
+            echo "Brand generator not found."
+            exit 1
+          fi
 
-      # 6. Verify generated logo
+      - name: Locate Android project
+        id: project
+        shell: bash
+        run: |
+          if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f app/settings.gradle ] || [ -f app/settings.gradle.kts ]; then
+            echo "dir=app" >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: Android Gradle project not found."
+            find . -maxdepth 4 -type f | sort | head -200
+            exit 1
+          fi
+
       - name: Verify NOCAM logo
         run: |
           test -f app/src/main/res/drawable-nodpi/nocam_logo.png
-          echo "NOCAM logo successfully generated."
+          echo "NOCAM logo generated."
 
-      # 7. Verify Android project
-      - name: Verify Gradle wrapper
+      - name: Generate Gradle wrapper if missing
+        working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
-          test -f gradlew
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper missing. Generating it..."
+
+            if [ -f build.gradle.kts ]; then
+              GRADLE_VERSION=$(grep -oE 'gradle:[0-9]+\.[0-9]+(\.[0-9]+)?' build.gradle.kts | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?$' || true)
+            else
+              GRADLE_VERSION=""
+            fi
+
+            GRADLE_VERSION="${GRADLE_VERSION:-8.9}"
+
+            gradle wrapper --gradle-version "$GRADLE_VERSION"
+          fi
+
+          if [ ! -f gradlew ]; then
+            echo "ERROR: Could not generate Gradle wrapper."
+            exit 1
+          fi
+
           chmod +x gradlew
 
-      # 8. Configure Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # 9. Build debug APK
-      - name: Build NOCAM APK
+      - name: Build NOCAM debug APK
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           ./gradlew --no-daemon clean assembleDebug
 
-      # 10. Verify APK
-      - name: Verify APK output
+      - name: Verify APK
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -type f | head -1)
 
-          if [ ! -f "$APK" ]; then
+          if [ -z "$APK" ]; then
             echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "APK successfully generated:"
+          echo "APK generated successfully:"
           ls -lh "$APK"
+          echo "$APK" > apk-path.txt
 
-      # 11. Upload APK artifact
       - name: Upload NOCAM APK
         uses: actions/upload-artifact@v4
         with:
           name: NOCAM-Android-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            ${{ steps.project.outputs.dir }}/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
 
-      # 12. Upload generated branding assets for inspection
-      - name: Upload NOCAM branding assets
+      - name: Upload NOCAM branding
         uses: actions/upload-artifact@v4
         with:
           name: NOCAM-Branding-Assets
