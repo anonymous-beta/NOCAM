@@ -1,4 +1,3 @@
-
 package com.nocam.security
 
 import android.content.Intent
@@ -8,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,6 +38,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -54,7 +54,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -228,7 +231,7 @@ private fun NocamScreen() {
             verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
 
-            // HEADER
+            // HEADER WITH ACTUAL NOCAM LOGO
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -247,13 +250,15 @@ private fun NocamScreen() {
                     contentAlignment = Alignment.Center
                 ) {
 
-                    Icon(
-                        imageVector = Icons.Default.Security,
-                        contentDescription = "NOCAM",
-                        tint = NocamBrightRed,
+                    Image(
+                        painter = painterResource(
+                            id = R.drawable.nocam_logo
+                        ),
+                        contentDescription = "NOCAM Logo",
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier
-                            .width(32.dp)
-                            .height(32.dp)
+                            .width(45.dp)
+                            .height(45.dp)
                     )
                 }
 
@@ -646,11 +651,9 @@ private fun NocamScreen() {
 
                     if (running && totalChecks > 0) {
 
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = {
-                                progress.toFloat() /
-                                    totalChecks.coerceAtLeast(1)
-                            },
+                        LinearProgressIndicator(
+                            progress = progress.toFloat() /
+                                totalChecks.coerceAtLeast(1),
                             modifier = Modifier.fillMaxWidth(),
                             color = NocamBrightRed,
                             trackColor = NocamPanelLight
@@ -767,11 +770,6 @@ private fun NocamScreen() {
                                     "JSON" -> "nocam-report.json"
                                     "SARIF" -> "nocam-report.sarif"
                                     else -> "nocam-report.md"
-                                }
-
-                                val mimeType = when (exportFormat) {
-                                    "JSON", "SARIF" -> "application/json"
-                                    else -> "text/markdown"
                                 }
 
                                 exportLauncher.launch(fileName)
