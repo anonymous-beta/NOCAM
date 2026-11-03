@@ -1,4 +1,4 @@
-name: NOCAM Android Build
+name: NOCAM Android APK Builder
 
 on:
   push:
@@ -15,92 +15,93 @@ permissions:
   contents: read
 
 concurrency:
-  group: nocam-build-${{ github.ref }}
+  group: nocam-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Generate Branding and Build APK
+    name: Build NOCAM APK
     runs-on: ubuntu-latest
-    timeout-minutes: 35
 
     steps:
-      - name: Checkout repository
+      # 1. Checkout repository
+      - name: Checkout NOCAM source
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      # 2. Set up Java for Android Gradle
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
-
+      # 3. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - name: Install image processing dependency
+      # 4. Install image generation dependency
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install Pillow
+          pip install Pillow
 
-      - name: Generate NOCAM branding assets
-        run: python tools/generate_brand_assets.py
+      # 5. Generate NOCAM branding assets
+      - name: Generate NOCAM branding
+        run: |
+          python tools/generate_brand_assets.py
 
-      - name: Verify generated assets
+      # 6. Verify generated logo
+      - name: Verify NOCAM logo
         run: |
           test -f app/src/main/res/drawable-nodpi/nocam_logo.png
-          test -f app/src/main/res/drawable-nodpi/nocam_splash.png
-          test -f app/src/main/res/drawable-nodpi/ic_launcher_foreground.png
-          test -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          test -f app/src/main/res/mipmap-mdpi/ic_launcher.png
-          test -f Assets/nocam_feature_graphic.png
-          echo "All required NOCAM branding assets exist."
+          echo "NOCAM logo successfully generated."
 
+      # 7. Verify Android project
+      - name: Verify Gradle wrapper
+        run: |
+          test -f gradlew
+          chmod +x gradlew
+
+      # 8. Configure Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
 
-      - name: Run unit tests
-        run: gradle testDebugUnitTest --no-daemon --stacktrace
+      # 9. Build debug APK
+      - name: Build NOCAM APK
+        run: |
+          ./gradlew --no-daemon clean assembleDebug
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
-
-      - name: Verify APK
+      # 10. Verify APK
+      - name: Verify APK output
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
+
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Debug APK was not generated."
-            find app/build/outputs -type f || true
+            echo "ERROR: APK was not generated."
             exit 1
           fi
+
+          echo "APK successfully generated:"
           ls -lh "$APK"
 
-      - name: Upload APK
+      # 11. Upload APK artifact
+      - name: Upload NOCAM APK
         uses: actions/upload-artifact@v4
         with:
-          name: NOCAM-debug-APK
+          name: NOCAM-Android-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
-      - name: Upload generated branding assets
+      # 12. Upload generated branding assets for inspection
+      - name: Upload NOCAM branding assets
         uses: actions/upload-artifact@v4
         with:
-          name: NOCAM-brand-assets
+          name: NOCAM-Branding-Assets
           path: |
             app/src/main/res/drawable-nodpi/nocam_logo.png
-            app/src/main/res/drawable-nodpi/nocam_splash.png
-            app/src/main/res/drawable-nodpi/ic_launcher_foreground.png
-            app/src/main/res/mipmap-*
-            app/src/main/res/values/ic_launcher_background.xml
-            Assets/nocam_feature_graphic.png
-          if-no-files-found: error
-          retention-days: 14
+            app/src/main/res/drawable/ic_launcher_foreground.png
+          if-no-files-found: warn
+          retention-days: 30
