@@ -1,3 +1,4 @@
+
 package com.nocam.security
 
 import android.content.Intent
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,7 +57,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -231,7 +230,7 @@ private fun NocamScreen() {
             verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
 
-            // HEADER WITH ACTUAL NOCAM LOGO
+            // HEADER WITH NOCAM LOGO
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
