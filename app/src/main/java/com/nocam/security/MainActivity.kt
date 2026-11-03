@@ -1,12 +1,15 @@
 
 package com.nocam.security
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,16 +20,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -35,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -52,18 +59,34 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
-private val NocamBlack = Color(0xFF080A09)
-private val NocamPanel = Color(0xFF141915)
-private val NocamGreen = Color(0xFF8BAF42)
+// ----------------------------------------------------
+// NOCAM DARK RED THEME
+// ----------------------------------------------------
+
+private val NocamBlack = Color(0xFF090707)
+private val NocamBackground = Color(0xFF100A0B)
+private val NocamPanel = Color(0xFF1B1113)
+private val NocamPanelLight = Color(0xFF271518)
+private val NocamRed = Color(0xFFB51F32)
+private val NocamBrightRed = Color(0xFFEF3349)
+private val NocamDarkRed = Color(0xFF64101D)
 private val NocamAmber = Color(0xFFFFB74D)
-private val NocamText = Color(0xFFE8EDE7)
-private val NocamMuted = Color(0xFF9AA69B)
+private val NocamText = Color(0xFFF4EDEE)
+private val NocamMuted = Color(0xFFAA999C)
+private val NocamBorder = Color(0xFF49232A)
+
+// ----------------------------------------------------
+// ACTIVITY
+// ----------------------------------------------------
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -75,212 +98,451 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// ----------------------------------------------------
+// THEME
+// ----------------------------------------------------
+
 @Composable
-private fun NocamTheme(content: @Composable () -> Unit) {
+private fun NocamTheme(
+    content: @Composable () -> Unit
+) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = NocamGreen,
+            primary = NocamBrightRed,
+            onPrimary = Color.White,
             secondary = NocamAmber,
             background = NocamBlack,
             surface = NocamPanel,
-            onPrimary = Color.Black,
             onBackground = NocamText,
-            onSurface = NocamText
+            onSurface = NocamText,
+            error = NocamBrightRed
         ),
         content = content
     )
 }
 
+// ----------------------------------------------------
+// MAIN SCREEN
+// ----------------------------------------------------
+
 @Composable
 private fun NocamScreen() {
+
     val activity = androidx.compose.ui.platform.LocalContext.current
         as ComponentActivity
-    val scope = rememberCoroutineScope()
 
-    var target by remember { mutableStateOf("192.168.1.1") }
-    var authorized by remember { mutableStateOf(false) }
-    var running by remember { mutableStateOf(false) }
-    var status by remember {
-        mutableStateOf("READY • AUTHORIZED NETWORKS ONLY")
+    val coroutineScope = rememberCoroutineScope()
+
+    var target by remember {
+        mutableStateOf("192.168.1.1")
     }
+
+    var publicMode by remember {
+        mutableStateOf(false)
+    }
+
+    var authorized by remember {
+        mutableStateOf(false)
+    }
+
+    var running by remember {
+        mutableStateOf(false)
+    }
+
+    var status by remember {
+        mutableStateOf("SYSTEM READY")
+    }
+
+    var progress by remember {
+        mutableStateOf(0)
+    }
+
+    var totalChecks by remember {
+        mutableStateOf(0)
+    }
+
     var findings by remember {
         mutableStateOf<List<ScanFinding>>(emptyList())
     }
-    var scanJob by remember { mutableStateOf<Job?>(null) }
-    var reportText by remember { mutableStateOf("") }
+
+    var scanJob by remember {
+        mutableStateOf<Job?>(null)
+    }
+
+    var report by remember {
+        mutableStateOf<ScanReport?>(null)
+    }
+
+    var exportFormat by remember {
+        mutableStateOf("MARKDOWN")
+    }
+
+    var reportText by remember {
+        mutableStateOf("")
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/markdown")
+        contract = ActivityResultContracts.CreateDocument("*/*")
     ) { uri ->
+
         if (uri != null) {
-            scope.launch {
+            coroutineScope.launch {
                 try {
-                    val output = activity.contentResolver.openOutputStream(uri)
-                        ?: throw IOException("Could not open the selected file.")
+                    val output =
+                        activity.contentResolver.openOutputStream(uri)
+                            ?: throw IOException(
+                                "Unable to open selected file."
+                            )
 
                     output.use {
-                        it.write(reportText.toByteArray(Charsets.UTF_8))
+                        it.write(
+                            reportText.toByteArray(Charsets.UTF_8)
+                        )
                     }
-                    status = "REPORT EXPORTED"
+
+                    status = "REPORT EXPORTED SUCCESSFULLY"
+
                 } catch (exception: Exception) {
-                    status = "EXPORT FAILED: " +
-                        (exception.message ?: "I/O error")
+                    status = "EXPORT FAILED: ${
+                        exception.message ?: "I/O error"
+                    }"
                 }
             }
         }
     }
 
+    // ------------------------------------------------
+    // SCREEN LAYOUT
+    // ------------------------------------------------
+
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = NocamBlack
+        color = NocamBackground
     ) {
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .background(NocamBackground)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
+
+            // HEADER
+
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+
                 Box(
                     modifier = Modifier
-                        .width(54.dp)
-                        .height(54.dp)
+                        .width(55.dp)
+                        .height(55.dp)
                         .background(
-                            NocamGreen.copy(alpha = 0.15f),
-                            RoundedCornerShape(16.dp)
+                            NocamDarkRed,
+                            RoundedCornerShape(15.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
+
                     Icon(
                         imageVector = Icons.Default.Security,
-                        contentDescription = "NOCAM security",
-                        tint = NocamGreen,
-                        modifier = Modifier.padding(10.dp)
+                        contentDescription = "NOCAM",
+                        tint = NocamBrightRed,
+                        modifier = Modifier
+                            .width(32.dp)
+                            .height(32.dp)
                     )
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+
                     Text(
                         text = "NOCAM",
+                        color = NocamText,
                         fontSize = 27.sp,
                         fontWeight = FontWeight.Black,
-                        color = NocamText
+                        letterSpacing = 2.sp
                     )
+
                     Text(
                         text = "NETWORK CAMERA AUDIT",
-                        fontSize = 11.sp,
-                        color = NocamGreen,
-                        letterSpacing = 1.5.sp
+                        color = NocamBrightRed,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.4.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
-                Text("v1.0", color = NocamMuted, fontSize = 12.sp)
-            }
-
-            HorizontalDivider(color = NocamGreen.copy(alpha = 0.35f))
-
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = NocamPanel
-                ),
-                shape = RoundedCornerShape(18.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalAlignment = Alignment.End
                 ) {
                     Text(
-                        "TARGET CONFIGURATION",
-                        color = NocamGreen,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        letterSpacing = 1.sp
+                        "VERSION",
+                        color = NocamMuted,
+                        fontSize = 9.sp
                     )
+
+                    Text(
+                        "1.0.0",
+                        color = NocamAmber,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                color = NocamBorder,
+                thickness = 1.dp
+            )
+
+            // TARGET CONFIGURATION
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = NocamPanel
+                )
+            ) {
+
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+
+                    SectionTitle("TARGET CONFIGURATION")
+
+                    Text(
+                        "AUDIT MODE",
+                        color = NocamMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
+                        RadioButton(
+                            selected = !publicMode,
+                            onClick = {
+                                publicMode = false
+                                authorized = false
+                            },
+                            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                                selectedColor = NocamBrightRed
+                            )
+                        )
+
+                        Text(
+                            "PRIVATE NETWORK",
+                            color = NocamText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(Modifier.width(10.dp))
+
+                        RadioButton(
+                            selected = publicMode,
+                            onClick = {
+                                publicMode = true
+                                authorized = false
+                            },
+                            colors = androidx.compose.material3.RadioButtonDefaults.colors(
+                                selectedColor = NocamBrightRed
+                            )
+                        )
+
+                        Text(
+                            "PUBLIC TARGET",
+                            color = NocamText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
                     OutlinedTextField(
                         value = target,
-                        onValueChange = { target = it },
+                        onValueChange = {
+                            target = it
+                        },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Private IP or CIDR") },
-                        placeholder = { Text("192.168.1.1") },
+                        label = {
+                            Text(
+                                if (publicMode) {
+                                    "Public IP or hostname"
+                                } else {
+                                    "Private IP or CIDR"
+                                }
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                if (publicMode) {
+                                    "203.0.113.10"
+                                } else {
+                                    "192.168.1.1"
+                                }
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Ascii
                         )
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (publicMode) {
+                            "Single public IPv4 address or hostname. Public CIDR scanning is disabled."
+                        } else {
+                            "Private RFC1918 IPv4 address or supported CIDR range."
+                        },
+                        color = NocamMuted,
+                        fontSize = 10.sp
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+
                         Checkbox(
                             checked = authorized,
-                            onCheckedChange = { authorized = it }
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "I am authorized to scan this network",
-                                fontSize = 13.sp,
-                                color = NocamText
+                            onCheckedChange = {
+                                authorized = it
+                            },
+                            colors = androidx.compose.material3.CheckboxDefaults.colors(
+                                checkedColor = NocamBrightRed,
+                                uncheckedColor = NocamMuted
                             )
+                        )
+
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+
                             Text(
-                                "Private IPv4 targets only",
-                                fontSize = 11.sp,
-                                color = NocamMuted
+                                "I HAVE AUTHORIZATION TO AUDIT THIS TARGET",
+                                color = NocamText,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                "Required before any network checks.",
+                                color = NocamMuted,
+                                fontSize = 10.sp
                             )
                         }
                     }
 
+                    // START AND STOP
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
                     ) {
+
                         Button(
                             onClick = {
+
                                 if (!authorized) {
-                                    status = "CONFIRM AUTHORIZATION FIRST"
+                                    status = "AUTHORIZATION REQUIRED"
+
                                 } else if (!running) {
+
                                     running = true
                                     findings = emptyList()
+                                    report = null
                                     reportText = ""
+                                    progress = 0
+                                    totalChecks = 0
                                     status = "VALIDATING TARGET"
 
-                                    scanJob = scope.launch {
+                                    scanJob = coroutineScope.launch {
+
                                         try {
-                                            // Enforce the existing private IPv4
-                                            // and CIDR scope restrictions.
-                                            val hosts = TargetScope.parse(target)
 
-                                            status = "STARTING NETWORK AUDIT"
+                                            val scanScope = target.trim()
 
-                                            // NetworkScanner is an object, not
-                                            // a class. scan() returns ScanReport.
-                                            val report = NetworkScanner.scan(
-                                                scope = target,
-                                                hosts = hosts,
-                                                onProgress = {
-                                                        completed,
-                                                        total,
-                                                        current ->
-                                                    status =
-                                                        "SCANNING $completed/$total • $current"
+                                            val hosts = if (publicMode) {
+
+                                                val validation =
+                                                    withContext(Dispatchers.IO) {
+                                                        AuthorizedPublicTarget
+                                                            .validate(scanScope)
+                                                    }
+
+                                                if (!validation.valid) {
+                                                    throw IllegalArgumentException(
+                                                        validation.message
+                                                    )
                                                 }
-                                            )
 
-                                            findings = report.findings
-                                            reportText = report.toMarkdown()
+                                                validation.addresses
+
+                                            } else {
+
+                                                TargetScope.parse(scanScope)
+                                            }
+
+                                            status = "STARTING AUDIT"
+
+                                            val scanReport =
+                                                NetworkScanner.scan(
+                                                    scope = scanScope,
+                                                    hosts = hosts,
+                                                    onProgress = {
+                                                            completed,
+                                                            total,
+                                                            current ->
+
+                                                        progress = completed
+                                                        totalChecks = total
+
+                                                        status =
+                                                            "CHECKING $current"
+                                                    }
+                                                )
+
+                                            report = scanReport
+                                            findings = scanReport.findings
+
+                                            reportText =
+                                                ReportExporter.markdown(
+                                                    scanReport
+                                                )
+
                                             status =
-                                                "SCAN COMPLETE • " +
-                                                "${report.openCount} OPEN PORTS"
-                                        } catch (exception: CancellationException) {
-                                            status = "SCAN CANCELLED"
+                                                "AUDIT COMPLETE • " +
+                                                "${scanReport.openCount} OPEN PORTS"
+
+                                        } catch (
+                                            exception: CancellationException
+                                        ) {
+
+                                            status = "AUDIT CANCELLED"
                                             throw exception
-                                        } catch (exception: Exception) {
-                                            status = "SCAN FAILED: " +
-                                                (exception.message
-                                                    ?: "Invalid target")
+
+                                        } catch (
+                                            exception: Exception
+                                        ) {
+
+                                            status =
+                                                "AUDIT FAILED: " +
+                                                (
+                                                    exception.message
+                                                        ?: "Unknown error"
+                                                )
+
                                         } finally {
+
                                             running = false
                                             scanJob = null
                                         }
@@ -288,178 +550,453 @@ private fun NocamScreen() {
                                 }
                             },
                             modifier = Modifier.weight(1f),
-                            enabled = !running
+                            enabled = !running,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NocamDarkRed,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
+
                             Icon(
                                 Icons.Default.PlayArrow,
                                 contentDescription = null
                             )
+
                             Spacer(Modifier.width(5.dp))
-                            Text("START SCAN")
+
+                            Text(
+                                "START AUDIT",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
 
                         Button(
                             onClick = {
                                 scanJob?.cancel()
-                                scanJob = null
-                                running = false
-                                status = "SCAN CANCELLED"
+                                status = "CANCELLING AUDIT"
                             },
-                            enabled = running
+                            enabled = running,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NocamPanelLight,
+                                contentColor = NocamBrightRed
+                            ),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
+
                             Icon(
                                 Icons.Default.Stop,
-                                contentDescription = "Cancel scan"
+                                contentDescription = "Stop audit"
                             )
                         }
                     }
                 }
             }
 
+            // LIVE STATUS
+
             Card(
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = NocamPanel
                 ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
+                shape = RoundedCornerShape(14.dp)
             ) {
+
                 Column(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(13.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+
                         if (running) {
+
                             CircularProgressIndicator(
-                                modifier = Modifier.width(20.dp),
-                                color = NocamGreen,
+                                modifier = Modifier
+                                    .width(17.dp)
+                                    .height(17.dp),
+                                color = NocamBrightRed,
                                 strokeWidth = 2.dp
                             )
+
                         } else {
+
                             Box(
                                 modifier = Modifier
                                     .width(9.dp)
                                     .height(9.dp)
                                     .background(
-                                        NocamGreen,
+                                        NocamBrightRed,
                                         RoundedCornerShape(50)
                                     )
                             )
                         }
 
                         Text(
-                            text = status,
-                            color = if (
-                                status.contains("FAILED") ||
-                                status.contains("CANCELLED")
-                            ) NocamAmber else NocamGreen,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            status,
+                            color = NocamBrightRed,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
                         )
                     }
 
-                    Text(
-                        "RESULTS • ${findings.size}",
-                        color = NocamMuted,
-                        fontSize = 12.sp
-                    )
+                    if (running && totalChecks > 0) {
+
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = {
+                                progress.toFloat() /
+                                    totalChecks.coerceAtLeast(1)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = NocamBrightRed,
+                            trackColor = NocamPanelLight
+                        )
+
+                        Text(
+                            "$progress / $totalChecks checks",
+                            color = NocamMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+
+                        Metric(
+                            "FINDINGS",
+                            findings.size.toString()
+                        )
+
+                        Metric(
+                            "OPEN PORTS",
+                            findings.count {
+                                it.state == "OPEN"
+                            }.toString()
+                        )
+
+                        Metric(
+                            "HOSTS",
+                            findings.map {
+                                it.host
+                            }.distinct().size.toString()
+                        )
+                    }
                 }
             }
 
-            Button(
-                onClick = {
-                    if (reportText.isBlank()) {
-                        status = "RUN A SCAN BEFORE EXPORTING"
-                    } else {
-                        exportLauncher.launch("nocam-report.md")
-                    }
-                },
-                enabled = !running,
-                modifier = Modifier.fillMaxWidth()
+            // EXPORT SECTION
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = NocamPanel
+                ),
+                shape = RoundedCornerShape(14.dp)
             ) {
-                Icon(Icons.Default.Article, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("EXPORT MARKDOWN REPORT")
+
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+
+                    SectionTitle("REPORT EXPORT")
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+
+                        listOf(
+                            "MARKDOWN",
+                            "JSON",
+                            "SARIF"
+                        ).forEach { format ->
+
+                            Button(
+                                onClick = {
+                                    exportFormat = format
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor =
+                                        if (exportFormat == format) {
+                                            NocamDarkRed
+                                        } else {
+                                            NocamPanelLight
+                                        },
+                                    contentColor = NocamText
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+
+                                Text(
+                                    format,
+                                    fontSize = 9.sp
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+
+                            val currentReport = report
+
+                            if (currentReport == null) {
+                                status = "COMPLETE AN AUDIT FIRST"
+                            } else {
+
+                                reportText = when (exportFormat) {
+                                    "JSON" ->
+                                        ReportExporter.json(currentReport)
+
+                                    "SARIF" ->
+                                        ReportExporter.sarif(currentReport)
+
+                                    else ->
+                                        ReportExporter.markdown(currentReport)
+                                }
+
+                                val fileName = when (exportFormat) {
+                                    "JSON" -> "nocam-report.json"
+                                    "SARIF" -> "nocam-report.sarif"
+                                    else -> "nocam-report.md"
+                                }
+
+                                val mimeType = when (exportFormat) {
+                                    "JSON", "SARIF" -> "application/json"
+                                    else -> "text/markdown"
+                                }
+
+                                exportLauncher.launch(fileName)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !running && report != null,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NocamDarkRed,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(9.dp)
+                    ) {
+
+                        Icon(
+                            Icons.Default.Article,
+                            contentDescription = null
+                        )
+
+                        Spacer(Modifier.width(7.dp))
+
+                        Text("EXPORT REPORT")
+                    }
+                }
             }
 
-            Text(
-                "FINDINGS",
-                color = NocamGreen,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp
-            )
+            // FINDINGS
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                Icon(
+                    Icons.Default.BugReport,
+                    contentDescription = null,
+                    tint = NocamBrightRed
+                )
+
+                Spacer(Modifier.width(7.dp))
+
+                Text(
+                    "AUDIT FINDINGS",
+                    color = NocamText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+
+                Spacer(Modifier.weight(1f))
+
+                Text(
+                    "${findings.size} RESULTS",
+                    color = NocamMuted,
+                    fontSize = 10.sp
+                )
+            }
 
             if (findings.isEmpty()) {
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
+
                     Text(
-                        text = if (running) {
-                            "Scanning authorized targets…"
+                        if (running) {
+                            "AUDIT IN PROGRESS..."
                         } else {
-                            "No results yet. Configure a private target and start a scan."
+                            "NO FINDINGS YET\n\nConfigure a target to begin."
                         },
                         color = NocamMuted,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
                 }
+
             } else {
+
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    items(findings) { finding ->
+
+                    items(
+                        items = findings,
+                        key = {
+                            "${it.host}:${it.port}:${it.state}"
+                        }
+                    ) { finding ->
+
                         FindingRow(finding)
                     }
                 }
             }
 
-            Text(
-                "NOCAM • AUTHORIZED SECURITY TESTING ONLY",
-                color = NocamMuted,
-                fontSize = 10.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
+            // BRANDING FOOTER
+
+            HorizontalDivider(
+                color = NocamBorder
             )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+
+                Text(
+                    "NOCAM • NETWORK CAMERA AUDIT",
+                    color = NocamMuted,
+                    fontSize = 9.sp
+                )
+
+                Text(
+                    "MADE BY ANONYMOUS-BETA",
+                    color = NocamBrightRed,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp
+                )
+
+                Text(
+                    "github.com/anonymous-beta",
+                    color = NocamAmber,
+                    fontSize = 10.sp,
+                    modifier = Modifier.clickable {
+                        activity.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse(
+                                    "https://github.com/anonymous-beta"
+                                )
+                            )
+                        )
+                    }
+                )
+            }
         }
     }
 }
 
+// ----------------------------------------------------
+// REUSABLE UI COMPONENTS
+// ----------------------------------------------------
+
 @Composable
-private fun FindingRow(finding: ScanFinding) {
+private fun SectionTitle(title: String) {
+
+    Text(
+        title,
+        color = NocamBrightRed,
+        fontWeight = FontWeight.Black,
+        fontSize = 11.sp,
+        letterSpacing = 1.1.sp
+    )
+}
+
+@Composable
+private fun Metric(
+    label: String,
+    value: String
+) {
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        Text(
+            value,
+            color = NocamBrightRed,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Black
+        )
+
+        Text(
+            label,
+            color = NocamMuted,
+            fontSize = 9.sp
+        )
+    }
+}
+
+@Composable
+private fun FindingRow(
+    finding: ScanFinding
+) {
+
     Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(11.dp),
         colors = CardDefaults.cardColors(
             containerColor = NocamPanel
-        ),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
+        )
     ) {
+
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(11.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
                 Text(
                     "${finding.host}:${finding.port}",
                     color = NocamText,
                     fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
                     modifier = Modifier.weight(1f)
                 )
+
                 Text(
                     finding.state,
-                    color = if (finding.state.equals("OPEN", true)) {
-                        NocamGreen
+                    color = if (finding.state == "OPEN") {
+                        NocamBrightRed
                     } else {
                         NocamMuted
                     },
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -467,13 +1004,25 @@ private fun FindingRow(finding: ScanFinding) {
             Text(
                 finding.service,
                 color = NocamAmber,
-                fontSize = 12.sp
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
             )
+
             Text(
                 finding.detail,
                 color = NocamMuted,
-                fontSize = 12.sp
+                fontSize = 11.sp
             )
+
+            if (finding.severity != "INFO") {
+
+                Text(
+                    "REVIEW: ${finding.severity}",
+                    color = NocamBrightRed,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
