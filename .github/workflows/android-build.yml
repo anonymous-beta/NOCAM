@@ -21,83 +21,93 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout source
       - name: Checkout NOCAM
         uses: actions/checkout@v4
 
-      # 2. Java setup
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 3. Python setup
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 4. Install Python dependencies
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install Pillow
 
-      # 5. Generate NOCAM branding
       - name: Generate NOCAM branding
         run: |
-          if [ ! -f tools/generate_brand_assets.py ]; then
-            echo "ERROR: Branding generator not found."
-            exit 1
-          fi
-
           python tools/generate_brand_assets.py
 
-      # 6. Verify logo
       - name: Verify NOCAM logo
         run: |
           test -f app/src/main/res/drawable-nodpi/nocam_logo.png
-          echo "NOCAM logo verified."
 
-      # 7. Locate Android project
-      - name: Locate Android project
-        id: project
-        shell: bash
+      # Automatically clean malformed XML declaration placement
+      - name: Repair Android Manifest
         run: |
-          if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
-            echo "dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f app/settings.gradle ] || [ -f app/settings.gradle.kts ]; then
-            echo "dir=app" >> "$GITHUB_OUTPUT"
-          else
-            echo "ERROR: Android project settings not found."
-            find . -maxdepth 4 -type f | sort | head -200
-            exit 1
-          fi
+          python - <<'PY'
+          from pathlib import Path
+          import re
 
-      # 8. Validate Android Manifest XML
+          path = Path("app/src/main/AndroidManifest.xml")
+
+          if not path.exists():
+              raise SystemExit("AndroidManifest.xml not found")
+
+          content = path.read_text(encoding="utf-8-sig")
+
+          # Remove XML declarations wherever they occur.
+          content = re.sub(
+              r'<\?xml\s+[^?]*\?>',
+              '',
+              content,
+              flags=re.IGNORECASE
+          )
+
+          # Remove leading whitespace.
+          content = content.lstrip()
+
+          # Add exactly one declaration at the beginning.
+          content = '<?xml version="1.0" encoding="utf-8"?>\n' + content
+
+          path.write_text(content, encoding="utf-8")
+
+          print("AndroidManifest.xml declaration repaired.")
+          PY
+
+      # Validate repaired XML
       - name: Validate Android Manifest
         run: |
           python - <<'PY'
           import xml.etree.ElementTree as ET
 
           path = "app/src/main/AndroidManifest.xml"
-
-          try:
-              ET.parse(path)
-              print("AndroidManifest.xml is valid XML.")
-          except (ET.ParseError, FileNotFoundError) as error:
-              print(f"MANIFEST ERROR: {error}")
-              raise
+          ET.parse(path)
+          print("AndroidManifest.xml is valid.")
           PY
 
-      # 9. Generate Gradle wrapper if missing
+      - name: Locate Android project
+        id: project
+        run: |
+          if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f app/settings.gradle ] || [ -f app/settings.gradle.kts ]; then
+            echo "dir=app" >> "$GITHUB_OUTPUT"
+          else
+            echo "Android project not found."
+            exit 1
+          fi
+
       - name: Prepare Gradle wrapper
         working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
         run: |
           if [ ! -f gradlew ]; then
-            echo "Generating Gradle wrapper..."
             gradle wrapper --gradle-version 8.10.2
           fi
 
@@ -106,40 +116,31 @@ jobs:
           sed -i 's#gradle-[0-9.]*-\(bin\|all\)\.zip#gradle-8.10.2-bin.zip#' \
             gradle/wrapper/gradle-wrapper.properties
 
-          echo "Gradle wrapper prepared."
-
-      # 10. Set up Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # 11. Confirm Gradle version
-      - name: Verify Gradle version
+      - name: Verify Gradle
         working-directory: ${{ steps.project.outputs.dir }}
         run: ./gradlew --version
 
-      # 12. Build APK
       - name: Build NOCAM APK
         working-directory: ${{ steps.project.outputs.dir }}
         run: |
           ./gradlew --no-daemon clean assembleDebug
 
-      # 13. Verify APK
       - name: Verify APK
         working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
         run: |
           APK=$(find . -type f \
             -path "*/build/outputs/apk/debug/*.apk" | head -1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "APK not generated."
             exit 1
           fi
 
-          echo "APK successfully generated:"
           ls -lh "$APK"
 
-      # 14. Upload APK
       - name: Upload NOCAM APK
         uses: actions/upload-artifact@v4
         with:
@@ -149,8 +150,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 15. Upload branding assets
-      - name: Upload NOCAM branding
+      - name: Upload branding assets
         uses: actions/upload-artifact@v4
         with:
           name: NOCAM-Branding-Assets
