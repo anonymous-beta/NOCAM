@@ -42,12 +42,12 @@ jobs:
 
       - name: Generate NOCAM branding
         run: |
-          if [ -f tools/generate_brand_assets.py ]; then
-            python tools/generate_brand_assets.py
-          else
-            echo "Brand generator not found."
-            exit 1
-          fi
+          python tools/generate_brand_assets.py
+
+      - name: Verify NOCAM logo
+        run: |
+          test -f app/src/main/res/drawable-nodpi/nocam_logo.png
+          echo "NOCAM logo verified."
 
       - name: Locate Android project
         id: project
@@ -58,62 +58,47 @@ jobs:
           elif [ -f app/settings.gradle ] || [ -f app/settings.gradle.kts ]; then
             echo "dir=app" >> "$GITHUB_OUTPUT"
           else
-            echo "ERROR: Android Gradle project not found."
-            find . -maxdepth 4 -type f | sort | head -200
+            echo "Android project settings file not found."
             exit 1
           fi
 
-      - name: Verify NOCAM logo
-        run: |
-          test -f app/src/main/res/drawable-nodpi/nocam_logo.png
-          echo "NOCAM logo generated."
-
-      - name: Generate Gradle wrapper if missing
+      - name: Generate Gradle wrapper
         working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
         run: |
           if [ ! -f gradlew ]; then
-            echo "Gradle wrapper missing. Generating it..."
-
-            if [ -f build.gradle.kts ]; then
-              GRADLE_VERSION=$(grep -oE 'gradle:[0-9]+\.[0-9]+(\.[0-9]+)?' build.gradle.kts | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?$' || true)
-            else
-              GRADLE_VERSION=""
-            fi
-
-            GRADLE_VERSION="${GRADLE_VERSION:-8.9}"
-
-            gradle wrapper --gradle-version "$GRADLE_VERSION"
-          fi
-
-          if [ ! -f gradlew ]; then
-            echo "ERROR: Could not generate Gradle wrapper."
-            exit 1
+            gradle wrapper --gradle-version 8.10.2
           fi
 
           chmod +x gradlew
 
+          # Force the compatible Gradle version
+          sed -i 's/gradle-[0-9.]*-\(bin\|all\)\.zip/gradle-8.10.2-bin.zip/' \
+            gradle/wrapper/gradle-wrapper.properties
+
+          cat gradle/wrapper/gradle-wrapper.properties
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build NOCAM debug APK
+      - name: Build NOCAM APK
         working-directory: ${{ steps.project.outputs.dir }}
         run: |
+          ./gradlew --version
           ./gradlew --no-daemon clean assembleDebug
 
       - name: Verify APK
         working-directory: ${{ steps.project.outputs.dir }}
+        shell: bash
         run: |
-          APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -type f | head -1)
+          APK=$(find . -type f -path "*/build/outputs/apk/debug/*.apk" | head -1)
 
           if [ -z "$APK" ]; then
-            echo "ERROR: APK was not generated."
+            echo "APK was not generated."
             exit 1
           fi
 
-          echo "APK generated successfully:"
+          echo "APK successfully generated:"
           ls -lh "$APK"
-          echo "$APK" > apk-path.txt
 
       - name: Upload NOCAM APK
         uses: actions/upload-artifact@v4
@@ -124,7 +109,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload NOCAM branding
+      - name: Upload branding assets
         uses: actions/upload-artifact@v4
         with:
           name: NOCAM-Branding-Assets
