@@ -10,9 +10,11 @@ object ReportExporter {
         report.toMarkdown()
 
     fun sarif(report: ScanReport): String {
+
         val results = report.findings
             .filter { it.state == "OPEN" }
             .joinToString(",") { finding ->
+
                 """
                 {
                   "ruleId": "NOCAM-OPEN-PORT-${finding.port}",
@@ -34,7 +36,7 @@ object ReportExporter {
         return """
         {
           "version": "2.1.0",
-          "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+          "${'$'}schema": "https://json.schemastore.org/sarif-2.1.0.json",
           "runs": [{
             "tool": {
               "driver": {
@@ -61,4 +63,4 @@ object ReportExporter {
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
-}
+    }
